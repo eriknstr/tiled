@@ -31,7 +31,6 @@
 #include "map.h"
 #include "mapdocument.h"
 #include "mapobject.h"
-#include "movetileset.h"
 #include "objectgroup.h"
 #include "preferences.h"
 #include "terrain.h"
@@ -209,14 +208,11 @@ TilesetDock::TilesetDock(QWidget *parent):
 {
     setObjectName(QLatin1String("TilesetDock"));
 
-    mTabBar->setMovable(true);
     mTabBar->setUsesScrollButtons(true);
     mTabBar->setExpanding(false);
 
     connect(mTabBar, SIGNAL(currentChanged(int)),
             SLOT(updateActions()));
-    connect(mTabBar, SIGNAL(tabMoved(int,int)),
-            this, SLOT(moveTileset(int,int)));
 
     QWidget *w = new QWidget(this);
 
@@ -293,11 +289,7 @@ TilesetDock::TilesetDock(QWidget *parent):
     retranslateUi();
     setAcceptDrops(true);
 
-    const auto &tilesetDocuments = documentManager->tilesetDocuments();
-    for (TilesetDocument *tilesetDocument : tilesetDocuments) {
-        mTilesets.append(tilesetDocument->tileset());
-        createTilesetView(mTilesets.size(), tilesetDocument);
-    }
+    updateTilesets();
 
     updateActions();
 }
@@ -344,8 +336,6 @@ void TilesetDock::setMapDocument(MapDocument *mapDocument)
 //                this, &TilesetDock::tilesetAdded);
 //        connect(mMapDocument, &MapDocument::tilesetRemoved,
 //                this, &TilesetDock::tilesetRemoved);
-//        connect(mMapDocument, &MapDocument::tilesetMoved,
-//                this, &TilesetDock::tilesetMoved);
 //        connect(mMapDocument, &MapDocument::tilesetReplaced,
 //                this, &TilesetDock::tilesetReplaced);
 
@@ -562,8 +552,7 @@ void TilesetDock::indexPressed(const QModelIndex &index)
 
 void TilesetDock::tilesetAdded(TilesetDocument *tilesetDocument)
 {
-    mTilesets.append(tilesetDocument->tileset());
-    createTilesetView(mTilesets.size(), tilesetDocument);
+    updateTilesets();
     updateActions();    // todo: check if needed
 }
 
@@ -608,54 +597,8 @@ void TilesetDock::tilesetChanged(Tileset *tileset)
 
 void TilesetDock::tilesetRemoved(TilesetDocument *tilesetDocument)
 {
-    tilesetDocument->disconnect(this);
-
-    // Delete the related tileset view
-    const int index = indexOf(mTilesets, tilesetDocument->tileset());
-    Q_ASSERT(index != -1);
-
-    mTilesets.remove(index);
-    mTabBar->removeTab(index);
-    delete tilesetViewAt(index);
-
-    Tileset *tileset = tilesetDocument->tileset().data();
-
-    // Make sure we don't reference this tileset anymore
-    if (mCurrentTiles) {
-        // TODO: Don't clean unnecessarily (but first the concept of
-        //       "current brush" would need to be introduced)
-        TileLayer *cleaned = static_cast<TileLayer *>(mCurrentTiles->clone());
-        cleaned->removeReferencesToTileset(tileset);
-        setCurrentTiles(cleaned);
-    }
-    if (mCurrentTile && mCurrentTile->tileset() == tileset)
-        setCurrentTile(nullptr);
-
+    updateTilesets();
     updateActions();
-}
-
-void TilesetDock::tilesetMoved(int from, int to)
-{
-#if QT_VERSION >= 0x050600
-    mTilesets.move(from, to);
-#else
-    mTilesets.insert(to, mTilesets.takeAt(from));
-#endif
-
-    // Move the related tileset views
-    QWidget *widget = mViewStack->widget(from);
-    mViewStack->removeWidget(widget);
-    mViewStack->insertWidget(to, widget);
-    mViewStack->setCurrentIndex(mTabBar->currentIndex());
-
-    // Update the titles of the affected tabs
-    const int start = qMin(from, to);
-    const int end = qMax(from, to);
-    for (int i = start; i <= end; ++i) {
-        const SharedTileset &tileset = mTilesets.at(i);
-        if (mTabBar->tabText(i) != tileset->name())
-            mTabBar->setTabText(i, tileset->name());
-    }
 }
 
 void TilesetDock::tilesetReplaced(int index, Tileset *tileset)
@@ -724,12 +667,6 @@ void TilesetDock::removeTileset(int index)
         undoStack->endMacro();
 }
 
-void TilesetDock::moveTileset(int from, int to)
-{
-    QUndoCommand *command = new MoveTileset(mMapDocument, from, to);
-    mMapDocument->undoStack()->push(command);
-}
-
 void TilesetDock::setCurrentTiles(TileLayer *tiles)
 {
     if (mCurrentTiles == tiles)
@@ -786,6 +723,75 @@ void TilesetDock::retranslateUi()
     mExportTileset->setText(tr("&Export Tileset As..."));
     mEditTileset->setText(tr("Edit Tile&set"));
     mDeleteTileset->setText(tr("&Remove Tileset"));
+}
+
+void TilesetDock::updateTilesets()
+{
+    // Try to update the list of tilesets with minimal changes
+
+
+    auto *documentManager = DocumentManager::instance();
+    auto tilesetDocuments = documentManager->tilesetDocuments();
+
+    std::sort(tilesetDocuments.begin(),
+              tilesetDocuments.end(),
+              [](const TilesetDocument *a, const TilesetDocument *b) {
+        return a->tileset()->name() < b->tileset()->name();
+    });
+
+    QVector<SharedTileset> tilesets;
+
+    int indexNew = 0, indexOld = 0;
+
+    while (indexNew < tilesetDocuments.size()) {
+        TilesetDocument *insertionCanditate = tilesetDocuments.at(indexNew);
+
+        if (indexOld < mTilesetDocuments.size()) {
+            TilesetDocument *removalCandidate = mTilesetDocuments.at(indexOld);
+
+            if (tilesetDocuments.contains(removalCandidate)) {
+                // insert new tileset here
+                ++indexOld;
+            } else {
+                // remove old tileset
+                mTilesetDocuments.removeAt(indexOld);
+            }
+        }
+
+
+    }
+
+
+    for (TilesetDocument *tilesetDocument : tilesetDocuments) {
+        tilesets.append(tilesetDocument->tileset());
+        createTilesetView(mTilesets.size(), tilesetDocument);
+    }
+
+    //    tilesetDocument->disconnect(this);
+
+    //    // Delete the related tileset view
+    //    const int index = indexOf(mTilesets, tilesetDocument->tileset());
+    //    Q_ASSERT(index != -1);
+
+    //    mTilesets.remove(index);
+    //    mTabBar->removeTab(index);
+    //    delete tilesetViewAt(index);
+
+    //    Tileset *tileset = tilesetDocument->tileset().data();
+
+    //    // Make sure we don't reference this tileset anymore
+    //    if (mCurrentTiles) {
+    //        // TODO: Don't clean unnecessarily (but first the concept of
+    //        //       "current brush" would need to be introduced)
+    //        TileLayer *cleaned = static_cast<TileLayer *>(mCurrentTiles->clone());
+    //        cleaned->removeReferencesToTileset(tileset);
+    //        setCurrentTiles(cleaned);
+    //    }
+    //    if (mCurrentTile && mCurrentTile->tileset() == tileset)
+    //        setCurrentTile(nullptr);
+
+
+    mTilesets = tilesets;
 }
 
 Tileset *TilesetDock::currentTileset() const

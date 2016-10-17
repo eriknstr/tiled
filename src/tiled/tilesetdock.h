@@ -120,7 +120,6 @@ private slots:
     void tilesetAdded(TilesetDocument *tilesetDocument);
     void tilesetChanged(Tileset *tileset);
     void tilesetRemoved(TilesetDocument *tilesetDocument);
-    void tilesetMoved(int from, int to);
     void tilesetReplaced(int index, Tileset *tileset);
     void tilesetNameChanged(Tileset *tileset);
 
@@ -129,7 +128,6 @@ private slots:
 
     void removeTileset();
     void removeTileset(int index);
-    void moveTileset(int from, int to);
 
     void editTileset();
     void importTileset();
@@ -142,6 +140,8 @@ private:
     void setCurrentTiles(TileLayer *tiles);
     void retranslateUi();
 
+    void updateTilesets();
+
     Tileset *currentTileset() const;
     TilesetView *currentTilesetView() const;
     TilesetView *tilesetViewAt(int index) const;
@@ -153,6 +153,7 @@ private:
 
     // Shared tileset references because the dock wants to add new tiles
     QVector<SharedTileset> mTilesets;
+    QList<TilesetDocument *> mTilesetDocuments;
 
     QTabBar *mTabBar;
     QStackedWidget *mViewStack;
